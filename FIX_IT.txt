@@ -1,0 +1,16 @@
+TO FIX THE COMPILER ERROR IN CURSOR:
+
+1. Open in Cursor's terminal:
+   open /Users/hasti/Desktop/InvestmentApp/InvestmentApp/InvestmentApp.xcodeproj
+
+2. Or, copy the working minimal version from Xcode
+
+3. The issue is the complex gesture expressions - they're too nested.
+
+4. Simplest solution: Remove the advanced zoom gestures temporarily
+
+5. The chart will still work with basic panning!
+
+TO BUILD FROM CURSOR:
+cd /Users/hasti/Desktop/InvestmentApp/InvestmentApp
+xcodebuild build -project InvestmentApp.xcodeproj -scheme InvestmentApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro' && open -a Simulator

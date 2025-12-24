@@ -1,0 +1,36 @@
+name: InvestmentApp
+options:
+  bundleIdPrefix: com.investolearn
+  deploymentTarget:
+    iOS: 16.0
+  developmentLanguage: en
+
+targets:
+  InvestmentApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: InvestmentAppApp.swift
+        group: InvestmentAppApp
+      - path: ContentView.swift
+        group: InvestmentApp
+      - Views
+      - Models
+      - Managers
+    info:
+      path: Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        CFBundleDisplayName: InvestoLearn
+    settings:
+      base:
+        PRODUCT_NAME: InvestmentApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.investolearn.app
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Info.plist
+        SWIFT_VERSION: 5.0
+

@@ -3,6 +3,7 @@ import Charts
 
 struct PortfolioView: View {
     @EnvironmentObject var portfolioManager: PortfolioManager
+    @EnvironmentObject var bitcoinPriceService: BitcoinPriceService
     @State private var showTradeSheet = false
     @State private var selectedStockIndex = 0
     @State private var selectedTimeframe = "1D"
@@ -43,19 +44,7 @@ struct PortfolioView: View {
                     // Stock Info Card
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Circle()
-                                .fill(LinearGradient(
-                                    colors: [Color(hex: selectedStock.color) ?? .blue, Color(hex: selectedStock.color)?.opacity(0.6) ?? .blue.opacity(0.6)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .frame(width: 60, height: 60)
-                                .overlay(
-                                    Text(selectedStock.symbol.prefix(1))
-                                        .font(.title)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
-                                )
+                            stockIconView
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(selectedStock.name)
@@ -84,7 +73,7 @@ struct PortfolioView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 
-                                Text("$\(String(format: "%.2f", selectedStock.chartData.last ?? 0))")
+                                Text("$\(String(format: "%.2f", currentPriceDisplay))")
                                     .font(.title)
                                     .fontWeight(.bold)
                             }
@@ -96,11 +85,7 @@ struct PortfolioView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 
-                                let change = getPriceChange()
-                                Text(change >= 0 ? "+\(String(format: "%.2f", change))%" : "\(String(format: "%.2f", change))%")
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(change >= 0 ? .green : .red)
+                                priceChangeView
                             }
                         }
                     }
@@ -146,39 +131,9 @@ struct PortfolioView: View {
                         }
                         .padding(.top, 8)
                         
-                        // Chart
-                        Chart {
-                            ForEach(Array(selectedStock.chartData.enumerated()), id: \.offset) { index, value in
-                                LineMark(
-                                    x: .value("Time", index),
-                                    y: .value("Price", value)
-                                )
-                                .foregroundStyle(Color(hex: selectedStock.color) ?? .blue)
-                                .lineStyle(StrokeStyle(lineWidth: 2))
-                                .interpolationMethod(.catmullRom)
-                                
-                                AreaMark(
-                                    x: .value("Time", index),
-                                    y: .value("Price", value)
-                                )
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [
-                                            (Color(hex: selectedStock.color) ?? .blue).opacity(0.4),
-                                            (Color(hex: selectedStock.color) ?? .blue).opacity(0.05)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .interpolationMethod(.catmullRom)
-                            }
-                        }
-                        .frame(height: 250)
-                        .chartXAxis(.hidden)
-                        .chartYAxis {
-                            AxisMarks(position: .leading)
-                        }
+                        // TradingView Chart - Use for all stocks including BTC
+                        TradingViewChart(stock: selectedStock)
+                            .environmentObject(bitcoinPriceService)
                     }
                     .padding()
                     .background(Color(.systemBackground))
@@ -332,16 +287,77 @@ struct PortfolioView: View {
             .sheet(isPresented: $showTradeSheet) {
                 TradeSheet(stock: selectedStock)
                     .environmentObject(portfolioManager)
+                    .environmentObject(bitcoinPriceService)
             }
         }
     }
     
+    // Get current price display - use real-time BTC price if available
+    private var currentPriceDisplay: Double {
+        if selectedStock.symbol == "BTC" && bitcoinPriceService.currentPrice > 0 {
+            return bitcoinPriceService.currentPrice
+        }
+        return selectedStock.chartData.last ?? 0
+    }
+    
     private func getPriceChange() -> Double {
-        let data = selectedStock.chartData
+        // For BTC, use price history; for others, use chart data
+        let data: [Double]
+        if selectedStock.symbol == "BTC" && !bitcoinPriceService.priceHistory.isEmpty {
+            data = bitcoinPriceService.getChartData()
+        } else {
+            data = selectedStock.chartData
+        }
+        
         guard data.count >= 2 else { return 0 }
         let current = data.last ?? 0
         let previous = data[data.count - 2]
+        guard previous != 0 else { return 0 }
         return ((current - previous) / previous) * 100
+    }
+    
+    // Simplified price change view to avoid type-checking timeout
+    private var priceChangeView: some View {
+        let change = getPriceChange()
+        let changeText = change >= 0 ? "+\(String(format: "%.2f", change))%" : "\(String(format: "%.2f", change))%"
+        let changeColor: Color = change >= 0 ? .green : .red
+        
+        return Text(changeText)
+            .font(.title3)
+            .fontWeight(.bold)
+            .foregroundColor(changeColor)
+    }
+    
+    
+    // Simplified stock icon view to avoid type-checking timeout
+    private var stockIconView: some View {
+        let baseColor = Color(hex: selectedStock.color) ?? .blue
+        let gradientColors = [baseColor, baseColor.opacity(0.6)]
+        let firstLetter = String(selectedStock.symbol.prefix(1))
+        
+        return Circle()
+            .fill(LinearGradient(
+                colors: gradientColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+            .frame(width: 60, height: 60)
+            .overlay(
+                Text(firstLetter)
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            )
+    }
+    
+    // Simplified chart gradient to avoid type-checking timeout
+    private var chartGradient: LinearGradient {
+        let baseColor = Color(hex: selectedStock.color) ?? .blue
+        return LinearGradient(
+            colors: [baseColor.opacity(0.4), baseColor.opacity(0.05)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
     
     private var currentValue: Double {
@@ -561,62 +577,13 @@ struct ProfessionalChartView: View {
     @State private var isDragging = false
     @State private var yAxisZoom: Double = 1.0
     
-    var body: some View {
+    private var chartContentView: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(stock.name)
-                        .font(.title)
-                        .fontWeight(.bold)
-                    
-                    Text(stock.symbol)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("$\(String(format: "%.2f", stock.chartData.last ?? 0))")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    
-                    let change = getPriceChange()
-                    Text(change >= 0 ? "+\(String(format: "%.2f", change))%" : "\(String(format: "%.2f", change))%")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(change >= 0 ? .green : .red)
-                }
-                
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding()
-            .background(Color(.systemBackground))
+            professionalChartHeader
             
             Divider()
             
-            // Timeframe Selector
-            HStack(spacing: 12) {
-                ForEach(["1D", "1W", "1M", "1Y"], id: \.self) { timeframe in
-                    Button(action: { selectedTimeframe = timeframe }) {
-                        Text(timeframe)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(selectedTimeframe == timeframe ? .white : .primary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(selectedTimeframe == timeframe ? Color.blue : Color(.systemGray5))
-                            .cornerRadius(8)
-                    }
-                }
-            }
-            .padding()
-            .background(Color(.systemGray6))
+            timeframeSelector
             
             // Professional Chart
             GeometryReader { geometry in
@@ -638,10 +605,12 @@ struct ProfessionalChartView: View {
                             .foregroundStyle(Color(.systemGray3))
                         AxisTick(stroke: StrokeStyle(lineWidth: 1))
                             .foregroundStyle(Color(.systemGray4))
-                        AxisValueLabel()
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.primary)
+                        AxisValueLabel {
+                                Text("")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
                     }
                 }
                 .chartYAxis {
@@ -767,6 +736,10 @@ struct ProfessionalChartView: View {
             .padding()
             .background(Color(.systemBackground))
         }
+    }
+    
+    var body: some View {
+        chartContentView
         .background(Color(.systemGray6))
         .gesture(
             MagnificationGesture()
@@ -859,117 +832,466 @@ struct ProfessionalChartView: View {
         let previous = data[data.count - 2]
         return ((current - previous) / previous) * 100
     }
+    
+    // Simplified header view to avoid type-checking timeout
+    // Simplified timeframe selector
+    private var timeframeSelector: some View {
+        HStack(spacing: 12) {
+            ForEach(["1D", "1W", "1M", "1Y"], id: \.self) { timeframe in
+                Button(action: { selectedTimeframe = timeframe }) {
+                    Text(timeframe)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(selectedTimeframe == timeframe ? .white : .primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(selectedTimeframe == timeframe ? Color.blue : Color(.systemGray5))
+                        .cornerRadius(8)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+    }
+    
+    private var professionalChartHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(stock.name)
+                    .font(.title)
+                    .fontWeight(.bold)
+                
+                Text(stock.symbol)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("$\(String(format: "%.2f", stock.chartData.last ?? 0))")
+                    .font(.title)
+                    .fontWeight(.bold)
+                
+                professionalChartPriceChangeView
+            }
+            
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+    }
+    
+    private var professionalChartPriceChangeView: some View {
+        let change = getPriceChange()
+        let changeText = change >= 0 ? "+\(String(format: "%.2f", change))%" : "\(String(format: "%.2f", change))%"
+        let changeColor: Color = change >= 0 ? .green : .red
+        
+        return Text(changeText)
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundColor(changeColor)
+    }
+    
+    
 }
 
-// MARK: - Trade Sheet
+// MARK: - Trade Sheet (TradingView Style)
 struct TradeSheet: View {
     @EnvironmentObject var portfolioManager: PortfolioManager
+    @EnvironmentObject var bitcoinPriceService: BitcoinPriceService
     let stock: Stock
     @Environment(\.dismiss) var dismiss
     @State private var quantity: String = "1"
-    @State private var tradeType: TradeType = .buy
+    @State private var selectedTradeType: TradeType = .buy
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+    @State private var inputMode: InputMode = .quantity // New: quantity or dollar amount
     
-    enum TradeType {
-        case buy, sell
-    }
+    enum TradeType { case buy, sell }
+    enum InputMode { case quantity, dollarAmount }
     
     var body: some View {
         NavigationView {
-            Form {
-                Section {
-                    HStack {
-                        Text("Price")
-                        Spacer()
-                        Text("$\(String(format: "%.2f", price))")
-                            .fontWeight(.semibold)
+            VStack(spacing: 0) {
+                // TradingView-style Buy/Sell Price Bar
+                buySellPriceBar
+                    .padding(.top, 8)
+                
+                // Main form content
+                Form {
+                    // Input Mode and Value Section
+                    Section {
+                        // Input Mode Toggle (only for buy)
+                        if selectedTradeType == .buy {
+                            Picker("Input Mode", selection: $inputMode) {
+                                Text("Quantity").tag(InputMode.quantity)
+                                Text("Dollar Amount").tag(InputMode.dollarAmount)
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: inputMode) { oldValue, newValue in
+                                // Convert between quantity and dollar amount when mode changes
+                                if newValue == .dollarAmount {
+                                    // Convert quantity to dollar amount
+                                    let qty = Double(quantity) ?? 0
+                                    quantity = String(format: "%.2f", qty * currentPrice)
+                                } else {
+                                    // Convert dollar amount to quantity
+                                    let dollars = Double(quantity) ?? 0
+                                    if currentPrice > 0 {
+                                        let qty = dollars / currentPrice
+                                        quantity = String(format: stock.symbol == "BTC" ? "%.6f" : "%.2f", qty)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Input Field (Quantity or Dollar Amount)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(inputMode == .quantity ? "Quantity" : "Dollar Amount")
+                                    .font(.subheadline)
+                                Spacer()
+                                if currentPrice > 0 && selectedTradeType == .buy {
+                                    Text("Can buy: \(String(format: stock.symbol == "BTC" ? "%.6f" : "%.2f", maxPurchasable))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            TextField(
+                                inputMode == .quantity 
+                                    ? (stock.symbol == "BTC" ? "Enter BTC amount" : "Enter quantity")
+                                    : "Enter dollar amount",
+                                text: $quantity
+                            )
+                                .keyboardType(.decimalPad)
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .onChange(of: quantity) { oldValue, newValue in
+                                // Filter input based on mode
+                                if inputMode == .dollarAmount {
+                                    quantity = newValue.filter { $0.isNumber || $0 == "." }
+                                } else if stock.symbol == "BTC" {
+                                        quantity = newValue.filter { $0.isNumber || $0 == "." }
+                                    } else {
+                                        quantity = String(newValue.filter { $0.isNumber })
+                                    }
+                                }
+                        }
+                        
+                        // Total Cost / Quantity Display
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(inputMode == .quantity ? "Total Cost" : "Quantity")
+                                    .font(.subheadline)
+                                Spacer()
+                                if inputMode == .quantity {
+                                Text("$\(String(format: "%.2f", totalPrice))")
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(totalPrice > portfolioManager.cash && selectedTradeType == .buy ? .red : .primary)
+                                } else {
+                                    Text("\(String(format: stock.symbol == "BTC" ? "%.6f" : "%.2f", calculatedQuantity))")
+                                        .font(.title3)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                        }
                     }
                     
-                    HStack {
-                        Text("Total")
-                        Spacer()
-                        Text("$\(String(format: "%.2f", totalPrice))")
-                            .fontWeight(.semibold)
+                    // Current Holdings Section
+                    if let holding = portfolioManager.getHolding(for: stock.symbol) {
+                        Section("Current Holdings") {
+                            HStack {
+                                Text("Shares")
+                                Spacer()
+                                Text("\(holding.quantity) \(stock.symbol == "BTC" ? "BTC" : "shares")")
+                                    .fontWeight(.semibold)
+                            }
+                            
+                            HStack {
+                                Text("Average Cost")
+                                Spacer()
+                                Text("$\(String(format: "%.2f", holding.purchasePrice))")
+                            }
+                            
+                            HStack {
+                                Text("Current Value")
+                                Spacer()
+                                Text("$\(String(format: "%.2f", holding.currentValue(currentPrice: currentPrice)))")
+                                    .fontWeight(.semibold)
+                            }
+                        }
                     }
                     
-                    Picker("Action", selection: $tradeType) {
-                        Text("Buy").tag(TradeType.buy)
-                        Text("Sell").tag(TradeType.sell)
+                    // Available Cash Section
+                    Section {
+                        HStack {
+                            Text("Available Cash")
+                            Spacer()
+                            Text("$\(String(format: "%.2f", portfolioManager.cash))")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.green)
+                        }
                     }
-                    
-                    TextField("Quantity", text: $quantity)
-                        .keyboardType(.numberPad)
                 }
                 
-                Section {
-                    if let holding = portfolioManager.getHolding(for: stock.symbol) {
-                        Text("Current Holdings: \(holding.quantity) shares")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                // Bottom Action Buttons - TradingView Style
+                VStack(spacing: 0) {
+                    Divider()
+                    
+                    HStack(spacing: 12) {
+                        // Sell Button (Left - Red)
+                        Button(action: {
+                            if selectedTradeType != .sell {
+                                selectedTradeType = .sell
+                            } else {
+                                executeTrade()
+                            }
+                        }) {
+                            Text("Sell")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(selectedTradeType == .sell ? Color.red : Color.gray.opacity(0.3))
+                                .cornerRadius(12)
+                        }
+                        .disabled(!canSell)
+                        .opacity(canSell ? 1.0 : 0.5)
+                        
+                        // Buy Button (Right - Green)
+                        Button(action: {
+                            if selectedTradeType != .buy {
+                                selectedTradeType = .buy
+                            } else {
+                                executeTrade()
+                            }
+                        }) {
+                            Text("Buy")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(selectedTradeType == .buy ? Color.green : Color.gray.opacity(0.3))
+                                .cornerRadius(12)
+                        }
+                        .disabled(!canBuy)
+                        .opacity(canBuy ? 1.0 : 0.5)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemBackground))
                 }
             }
             .navigationTitle("Trade \(stock.symbol)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Confirm") {
-                        executeTrade()
-                    }
-                    .disabled(!canTrade)
+                    Button("Close") { dismiss() }
                 }
             }
+            .alert("Trade Error", isPresented: $showAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(alertMessage)
+            }
+        }
+        .onAppear {
+            // Ensure Bitcoin price service is started
+            bitcoinPriceService.start()
+            portfolioManager.bitcoinPriceService = bitcoinPriceService
         }
     }
     
-    private var price: Double {
-        stock.chartData.last ?? 0
-    }
-    
-    private var quantityValue: Int {
-        Int(quantity) ?? 0
-    }
-    
-    private var totalPrice: Double {
-        Double(quantityValue) * price
-    }
-    
-    private var canTrade: Bool {
-        guard quantityValue > 0 else { return false }
+    // TradingView-style Buy/Sell Price Bar
+    // TradingView-style Buy/Sell Price Bar
+    private var buySellPriceBar: some View {
+        let priceText = formatPrice(currentPrice)
+        let sellOpacity = selectedTradeType == .sell ? 0.9 : 0.7
+        let buyOpacity = selectedTradeType == .buy ? 0.9 : 0.7
         
-        if tradeType == .buy {
-            return totalPrice <= portfolioManager.cash
-        } else {
-            guard let holding = portfolioManager.getHolding(for: stock.symbol) else {
-                return false
+        return HStack(spacing: 0) {
+            // Sell Price (Left - Red)
+            Button(action: { selectedTradeType = .sell }) {
+                VStack(spacing: 4) {
+                    Text("Sell")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    Text(priceText)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 60)
+                .background(Color.red.opacity(sellOpacity))
             }
-            return quantityValue <= holding.quantity
+            
+            // Spread/Middle
+            VStack(spacing: 2) {
+                Text(priceText)
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Text("Current")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+            .frame(width: 60)
+            .background(Color.gray.opacity(0.2))
+            
+            // Buy Price (Right - Green)
+            Button(action: { selectedTradeType = .buy }) {
+                VStack(spacing: 4) {
+                    Text("Buy")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    Text(priceText)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 60)
+                .background(Color.green.opacity(buyOpacity))
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+    
+    
+    // Get current price - use real-time price for BTC, chart data for others
+    private var currentPrice: Double {
+        if stock.symbol == "BTC" && bitcoinPriceService.currentPrice > 0 {
+            return bitcoinPriceService.currentPrice
+        }
+        return stock.chartData.last ?? 0
+    }
+    
+    // Get the input value (quantity or dollar amount depending on mode)
+    private var inputValue: Double {
+        Double(quantity) ?? 0.0
+    }
+    
+    // Calculate quantity based on input mode
+    private var calculatedQuantity: Double {
+        if inputMode == .dollarAmount {
+            guard currentPrice > 0 else { return 0 }
+            return inputValue / currentPrice
+        } else {
+            return inputValue
+        }
+    }
+    
+    // Calculate total price based on input mode
+    private var totalPrice: Double {
+        if inputMode == .dollarAmount {
+            return inputValue // User entered dollar amount directly
+        } else {
+            return calculatedQuantity * currentPrice
+        }
+    }
+    
+    private var quantityValue: Double {
+        calculatedQuantity
+    }
+    
+    private var maxPurchasable: Double {
+        guard currentPrice > 0 else { return 0 }
+        return portfolioManager.cash / currentPrice
+    }
+    
+    private var canBuy: Bool {
+        guard quantityValue > 0, currentPrice > 0 else { return false }
+        return totalPrice <= portfolioManager.cash
+    }
+    
+    private var canSell: Bool {
+        guard let holding = portfolioManager.getHolding(for: stock.symbol) else { return false }
+        return quantityValue > 0 && quantityValue <= holding.quantity
+    }
+    
+    private func formatPrice(_ price: Double) -> String {
+        if stock.symbol == "BTC" {
+            return String(format: "%.0f", price)
+        } else if price >= 1000 {
+            return String(format: "%.0f", price)
+        } else {
+            return String(format: "%.2f", price)
         }
     }
     
     private func executeTrade() {
-        if tradeType == .buy {
+        // Ensure bitcoinPriceService is injected
+        portfolioManager.bitcoinPriceService = bitcoinPriceService
+        
+        // Calculate quantity to trade - now using Double to support fractional BTC
+        let quantityToTrade: Double = quantityValue
+        let cost = quantityToTrade * currentPrice
+        
+        // Validate quantity
+        guard quantityToTrade > 0 else {
+            alertMessage = "Please enter a valid quantity or amount."
+            showAlert = true
+            return
+        }
+        
+        if selectedTradeType == .buy {
+            // Verify we have enough cash
+            guard cost <= portfolioManager.cash else {
+                alertMessage = "Not enough cash. You have $\(String(format: "%.2f", portfolioManager.cash)) available. Cost: $\(String(format: "%.2f", cost))"
+                showAlert = true
+                return
+            }
+            
+            // Execute the trade
             let success = portfolioManager.buyStock(
                 symbol: stock.symbol,
-                quantity: quantityValue,
-                price: price
+                quantity: quantityToTrade,
+                price: currentPrice
             )
+            
             if success {
+                // Trade successful - dismiss will trigger view updates via @Published properties
                 dismiss()
+            } else {
+                alertMessage = "Trade failed. Please try again."
+                showAlert = true
             }
         } else {
+            // Sell logic
+            guard let holding = portfolioManager.getHolding(for: stock.symbol) else {
+                alertMessage = "You don't own any \(stock.symbol)."
+                showAlert = true
+                return
+            }
+            
+            guard quantityToTrade <= holding.quantity else {
+                alertMessage = "You only own \(holding.quantity) \(stock.symbol == "BTC" ? "BTC" : "shares")."
+                showAlert = true
+                return
+            }
+            
             let success = portfolioManager.sellStock(
                 symbol: stock.symbol,
-                quantity: quantityValue,
-                price: price
+                quantity: quantityToTrade,
+                price: currentPrice
             )
+            
             if success {
                 dismiss()
+            } else {
+                alertMessage = "Sale failed. Please try again."
+                showAlert = true
             }
         }
     }

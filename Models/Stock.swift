@@ -48,10 +48,10 @@ struct StockDataGenerator {
 struct Holding: Identifiable, Codable {
     let id: UUID
     let stockSymbol: String
-    var quantity: Int
+    var quantity: Double  // Changed from Int to Double to support fractional BTC
     var purchasePrice: Double
     
-    init(id: UUID = UUID(), stockSymbol: String, quantity: Int, purchasePrice: Double) {
+    init(id: UUID = UUID(), stockSymbol: String, quantity: Double, purchasePrice: Double) {
         self.id = id
         self.stockSymbol = stockSymbol
         self.quantity = quantity
@@ -59,11 +59,11 @@ struct Holding: Identifiable, Codable {
     }
     
     func currentValue(currentPrice: Double) -> Double {
-        Double(quantity) * currentPrice
+        quantity * currentPrice
     }
     
     func totalReturn(currentPrice: Double) -> Double {
-        currentValue(currentPrice: currentPrice) - (Double(quantity) * purchasePrice)
+        currentValue(currentPrice: currentPrice) - (quantity * purchasePrice)
     }
     
     func totalReturnPercent(currentPrice: Double) -> Double {
@@ -75,7 +75,7 @@ struct Transaction: Identifiable, Codable {
     let id: UUID
     let stockSymbol: String
     let type: TransactionType
-    let quantity: Int
+    let quantity: Double  // Changed from Int to Double to support fractional BTC
     let price: Double
     let totalAmount: Double
     let date: Date
@@ -84,13 +84,13 @@ struct Transaction: Identifiable, Codable {
         case buy, sell
     }
     
-    init(id: UUID = UUID(), stockSymbol: String, type: TransactionType, quantity: Int, price: Double, date: Date = Date()) {
+    init(id: UUID = UUID(), stockSymbol: String, type: TransactionType, quantity: Double, price: Double, date: Date = Date()) {
         self.id = id
         self.stockSymbol = stockSymbol
         self.type = type
         self.quantity = quantity
         self.price = price
-        self.totalAmount = Double(quantity) * price
+        self.totalAmount = quantity * price
         self.date = date
     }
 }

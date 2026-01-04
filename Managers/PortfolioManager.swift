@@ -3,8 +3,15 @@ import Combine
 
 class PortfolioManager: ObservableObject {
     @Published var holdings: [Holding] = []
-    @Published var cash: Double = 10000.0  // Starting cash
+    @Published var cash: Double = 10000.0  // Starting cash ($10,000 virtual money)
     @Published var transactions: [Transaction] = []
+    
+    // Learning System
+    @Published var totalXP: Int = 0
+    @Published var currentRank: String = "Beginner"
+    
+    // BitcoinPriceService injection for real-time BTC prices
+    var bitcoinPriceService: BitcoinPriceService?
     
     var totalValue: Double {
         let holdingsValue = holdings.reduce(0) { total, holding in
@@ -14,13 +21,43 @@ class PortfolioManager: ObservableObject {
         return cash + holdingsValue
     }
     
+    func addXP(_ xp: Int) {
+        totalXP += xp
+        updateRank()
+    }
+    
+    func rewardMoney(_ amount: Double) {
+        cash += amount
+    }
+    
+    private func updateRank() {
+        // Rank system based on total XP
+        switch totalXP {
+        case 0..<100:
+            currentRank = "Beginner"
+        case 100..<300:
+            currentRank = "Apprentice"
+        case 300..<500:
+            currentRank = "Investor"
+        case 500..<1000:
+            currentRank = "Expert"
+        default:
+            currentRank = "Master"
+        }
+    }
+    
     func getCurrentPrice(for symbol: String) -> Double {
+        // Use real-time Bitcoin price if available
+        if symbol == "BTC", let btcPrice = bitcoinPriceService?.currentPrice, btcPrice > 0 {
+            return btcPrice
+        }
+        // For other symbols, use the default data generator
         let data = StockDataGenerator.getChartData(for: symbol)
         return data.last ?? 0
     }
     
-    func buyStock(symbol: String, quantity: Int, price: Double) -> Bool {
-        let cost = Double(quantity) * price
+    func buyStock(symbol: String, quantity: Double, price: Double) -> Bool {
+        let cost = quantity * price
         
         if cost > cash {
             return false // Not enough cash
@@ -29,8 +66,8 @@ class PortfolioManager: ObservableObject {
         // Check if we already own this stock
         if let index = holdings.firstIndex(where: { $0.stockSymbol == symbol }) {
             let totalQuantity = holdings[index].quantity + quantity
-            let totalValue = (Double(holdings[index].quantity) * holdings[index].purchasePrice) + cost
-            holdings[index].purchasePrice = totalValue / Double(totalQuantity)
+            let totalValue = (holdings[index].quantity * holdings[index].purchasePrice) + cost
+            holdings[index].purchasePrice = totalValue / totalQuantity
             holdings[index].quantity = totalQuantity
         } else {
             holdings.append(Holding(stockSymbol: symbol, quantity: quantity, purchasePrice: price))
@@ -49,7 +86,7 @@ class PortfolioManager: ObservableObject {
         return true
     }
     
-    func sellStock(symbol: String, quantity: Int, price: Double) -> Bool {
+    func sellStock(symbol: String, quantity: Double, price: Double) -> Bool {
         guard let index = holdings.firstIndex(where: { $0.stockSymbol == symbol }) else {
             return false // Don't own this stock
         }
@@ -58,12 +95,12 @@ class PortfolioManager: ObservableObject {
             return false // Not enough shares
         }
         
-        let revenue = Double(quantity) * price
+        let revenue = quantity * price
         cash += revenue
         
         holdings[index].quantity -= quantity
         
-        if holdings[index].quantity == 0 {
+        if holdings[index].quantity <= 0.000001 { // Use small threshold for floating point comparison
             holdings.remove(at: index)
         }
         

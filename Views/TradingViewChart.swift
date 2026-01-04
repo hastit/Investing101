@@ -3,7 +3,6 @@ import Charts
 
 struct TradingViewChart: View {
     let stock: Stock
-    @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var bitcoinPriceService: BitcoinPriceService
     @State private var selectedTimeframe: String = "1D"
     
@@ -11,7 +10,6 @@ struct TradingViewChart: View {
     private let visiblePointsCount = 50
     
     private var allChartData: [Double] {
-        // Use real Bitcoin prices if stock is BTC and service is available
         if stock.symbol == "BTC" && !bitcoinPriceService.priceHistory.isEmpty {
             return bitcoinPriceService.getChartData()
         }
@@ -44,33 +42,33 @@ struct TradingViewChart: View {
         let current = data.last ?? 0
         let previous = data[data.count - 2]
         let change = current - previous
+        // Safety: prevent division by zero
+        guard previous != 0 else { return (change, 0) }
         let percent = ((current - previous) / previous) * 100
-        return (change, percent)
+        return (change, percent.isFinite && !percent.isNaN ? percent : 0)
     }
     
-    // Smooth Y-axis range with animation support - tight range to show price changes clearly
+    // TradingView-style stable Y-axis range with margins
     private var priceRange: ClosedRange<Double> {
         guard !chartData.isEmpty else { return 0...100 }
         let minPrice = chartData.min() ?? 0
         let maxPrice = chartData.max() ?? 0
         let actualRange = maxPrice - minPrice
         
-        // For Bitcoin, use a tighter range to show dollar-to-dollar changes
-        if stock.symbol == "BTC" {
-            // Use actual range or at least $10-20 range for visibility
-            let range = max(actualRange, 20.0)
-            // Small padding - just 2-3% to show price movements clearly
-            let padding = range * 0.03
-            return (minPrice - padding)...(maxPrice + padding)
-        } else {
-            // For other stocks, use percentage-based range
-            let range = max(actualRange, maxPrice * 0.02)
-            let padding = range * 0.08
-            return (minPrice - padding)...(maxPrice + padding)
+        // Safety check: if all prices are the same, create a small range
+        guard actualRange > 0 && maxPrice > 0 else {
+            let center = maxPrice > 0 ? maxPrice : 100.0
+            return (center - 5.0)...(center + 5.0)
         }
+        
+        // TradingView default: ~10% margins for stability
+        let range = max(actualRange, maxPrice * 0.01)
+        let margin = range * 0.1
+        
+        return (minPrice - margin)...(maxPrice + margin)
     }
     
-    // Calculate Y-axis values - show 5-6 evenly spaced price levels
+    // TradingView-style Y-axis values - automatic, evenly spaced
     private var yAxisValues: [Double] {
         guard !chartData.isEmpty else { return [] }
         
@@ -78,60 +76,113 @@ struct TradingViewChart: View {
         let maxPrice = priceRange.upperBound
         let range = maxPrice - minPrice
         
-        // Target 5-6 labels for readability
-        let targetLabels = 5
-        let step = range / Double(targetLabels - 1)
+        // Safety check: handle zero or invalid range
+        guard range > 0 && range.isFinite && !range.isNaN else {
+            let center = maxPrice > 0 ? maxPrice : 100.0
+            return [center - 5, center, center + 5]
+        }
         
-        // Round step to a nice increment (e.g., 1, 5, 10, 50, 100)
-        let roundedStep: Double
-        if step < 2 {
-            roundedStep = 1.0  // $1 increments for small ranges
-        } else if step < 5 {
-            roundedStep = 2.0  // $2 increments
-        } else if step < 10 {
-            roundedStep = 5.0  // $5 increments
-        } else if step < 50 {
-            roundedStep = 10.0 // $10 increments
+        // Calculate optimal step size
+        let targetSteps = 5.0
+        let rawStep = range / targetSteps
+        
+        // Safety check: ensure rawStep is valid
+        guard rawStep > 0 && rawStep.isFinite && !rawStep.isNaN else {
+            let step = range / 5.0
+            var values: [Double] = []
+            var current = minPrice
+            while current <= maxPrice && values.count < 7 {
+                values.append(current)
+                current += step
+            }
+            return values
+        }
+        
+        // Round to nice increments (safe logarithm calculation)
+        let logValue = log10(rawStep)
+        guard logValue.isFinite && !logValue.isNaN else {
+            // Fallback to simple division
+            let step = range / 5.0
+            var values: [Double] = []
+            var current = ceil(minPrice / step) * step
+            while current <= maxPrice && values.count < 7 {
+                values.append(current)
+                current += step
+            }
+            return values
+        }
+        
+        let magnitude = pow(10.0, floor(logValue))
+        guard magnitude > 0 && magnitude.isFinite && !magnitude.isNaN else {
+            let step = range / 5.0
+            var values: [Double] = []
+            var current = ceil(minPrice / step) * step
+            while current <= maxPrice && values.count < 7 {
+                values.append(current)
+                current += step
+            }
+            return values
+        }
+        
+        let normalized = rawStep / magnitude
+        let rounded: Double
+        
+        if normalized <= 1.0 {
+            rounded = 1.0
+        } else if normalized <= 2.0 {
+            rounded = 2.0
+        } else if normalized <= 5.0 {
+            rounded = 5.0
         } else {
-            roundedStep = 50.0 // $50 increments for large ranges
+            rounded = 10.0
+        }
+        
+        let step = rounded * magnitude
+        guard step > 0 && step.isFinite && !step.isNaN else {
+            let simpleStep = range / 5.0
+            var values: [Double] = []
+            var current = ceil(minPrice / simpleStep) * simpleStep
+            while current <= maxPrice && values.count < 7 {
+                values.append(current)
+                current += simpleStep
+            }
+            return values
         }
         
         // Generate evenly spaced values
         var values: [Double] = []
-        var current = ceil(minPrice / roundedStep) * roundedStep
+        var current = ceil(minPrice / step) * step
         
-        while current <= maxPrice && values.count < targetLabels + 1 {
+        while current <= maxPrice && values.count < 7 {
             values.append(current)
-            current += roundedStep
+            current += step
+            // Safety: prevent infinite loops
+            if values.count > 10 {
+                break
+            }
         }
         
-        return values
+        return values.isEmpty ? [minPrice, maxPrice] : values
     }
     
-    // Fixed X-axis domain to prevent zooming
+    // Fixed X-axis domain
     private var xAxisDomain: ClosedRange<Int> {
         return 0...(max(visiblePointsCount - 1, chartData.count - 1))
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header with symbol and price
+            // Header
             chartHeader
             
-            // Main chart area with fixed viewport
-            ZStack {
-                // Chart background
-                Color(.systemBackground)
-                
-                // Chart with overlay
-                chartWithOverlay
-                    .frame(height: 320)
-            }
+            // Chart area
+            chartArea
+                .frame(height: 320)
             
-            // Time axis at bottom
+            // Time axis
             timeAxis
         }
-        .background(Color(.systemBackground))
+        .background(Color.white)
         .cornerRadius(16)
     }
     
@@ -142,11 +193,11 @@ struct TradingViewChart: View {
                 HStack(spacing: 8) {
                     Text(stock.symbol)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.black)
                     
                     Text("/ USD")
                         .font(.system(size: 14))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.gray)
                     
                     Circle()
                         .fill(priceChange.percent >= 0 ? Color.green : Color.red)
@@ -155,7 +206,7 @@ struct TradingViewChart: View {
                 
                 Text(stock.name)
                     .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.gray)
             }
             
             Spacer()
@@ -163,7 +214,7 @@ struct TradingViewChart: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Text(formatPrice(currentPriceValue))
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.black)
                 
                 HStack(spacing: 6) {
                     Text(formatChange(priceChange.value))
@@ -178,146 +229,96 @@ struct TradingViewChart: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .background(Color.white)
     }
     
-    // MARK: - Chart with Overlay
-    @ViewBuilder
-    private var chartWithOverlay: some View {
-        if stock.symbol == "BTC" {
-            Chart(chartDataPoints, id: \.index) { point in
-                LineMark(
-                    x: .value("Index", point.index),
-                    y: .value("Price", point.price)
-                )
-                .foregroundStyle(strokeColor)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.catmullRom)
-            }
-            .chartXScale(domain: xAxisDomain)
-            .chartYScale(domain: priceRange)
-            .chartXAxis(.hidden)
-            .chartYAxis {
-                AxisMarks(position: .trailing, values: yAxisValues) { value in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                        .foregroundStyle(Color.gray.opacity(0.2))
-                    
-                    if let price = value.as(Double.self) {
-                        AxisValueLabel {
-                            Text(formatPriceForAxis(price))
-                                .font(.system(size: 11, weight: .medium, design: .default))
-                                .foregroundStyle(Color.gray)
-                        }
-                    }
-                }
-            }
-            .chartPlotStyle { plotArea in
-                plotArea.background(Color.clear)
-            }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    currentPriceIndicatorOverlay(proxy: proxy, geometry: geometry)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        } else {
-            Chart(chartDataPoints, id: \.index) { point in
-                LineMark(
-                    x: .value("Index", point.index),
-                    y: .value("Price", point.price)
-                )
-                .foregroundStyle(strokeColor)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.catmullRom)
-            }
-            .chartXScale(domain: xAxisDomain)
-            .chartYScale(domain: priceRange)
-            .chartXAxis(.hidden)
-            .chartYAxis {
-                AxisMarks(position: .trailing, values: .automatic(desiredCount: 5)) { value in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                        .foregroundStyle(Color.gray.opacity(0.2))
-                    
-                    if let price = value.as(Double.self) {
-                        AxisValueLabel {
-                            Text(formatPriceForAxis(price))
-                                .font(.system(size: 11, weight: .medium, design: .default))
-                                .foregroundStyle(Color.gray)
-                        }
-                    }
-                }
-            }
-            .chartPlotStyle { plotArea in
-                plotArea.background(Color.clear)
-            }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    currentPriceIndicatorOverlay(proxy: proxy, geometry: geometry)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+    // MARK: - Chart Area
+    private var chartArea: some View {
+        Chart(chartDataPoints, id: \.index) { point in
+            LineMark(
+                x: .value("Index", point.index),
+                y: .value("Price", point.price)
+            )
+            .foregroundStyle(Color(red: 0.16, green: 0.38, blue: 1.0)) // TradingView blue
+            .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            .interpolationMethod(.linear)
         }
+        .chartXScale(domain: xAxisDomain)
+        .chartYScale(domain: priceRange)
+        .chartXAxis {
+            // Vertical grid lines - TradingView style
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                    .foregroundStyle(Color(red: 0.77, green: 0.80, blue: 0.81, opacity: 0.25))
+            }
+        }
+        .chartYAxis {
+            // Horizontal grid lines and price labels - TradingView style
+            AxisMarks(position: .trailing, values: yAxisValues) { value in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                    .foregroundStyle(Color(red: 0.77, green: 0.80, blue: 0.81, opacity: 0.3))
+                
+                if let price = value.as(Double.self) {
+                    AxisValueLabel {
+                        Text(formatPriceForAxis(price))
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(Color(red: 0.13, green: 0.13, blue: 0.13)) // TradingView text color
+                    }
+                }
+            }
+        }
+        .chartPlotStyle { plotArea in
+            plotArea.background(Color.white)
+        }
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                priceLineOverlay(proxy: proxy, geometry: geometry)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
     
-    // MARK: - Current Price Indicator Overlay (moves along X and Y axis)
-    private func currentPriceIndicatorOverlay(proxy: ChartProxy, geometry: GeometryProxy) -> some View {
-        guard !chartData.isEmpty else { return AnyView(EmptyView()) }
+    // MARK: - Price Line Overlay (last price indicator)
+    private func priceLineOverlay(proxy: ChartProxy, geometry: GeometryProxy) -> some View {
+        guard !chartData.isEmpty,
+              let plotFrameAnchor = proxy.plotFrame else {
+            return AnyView(EmptyView())
+        }
         
-        let plotFrame = geometry[proxy.plotFrame!]
+        let plotFrame = geometry[plotFrameAnchor]
         let lastIndex = chartData.count - 1
         
-        // Get X position for the last data point (right edge)
-        guard let xPosition = proxy.position(forX: lastIndex) else {
+        guard lastIndex >= 0,
+              let xPos = proxy.position(forX: lastIndex),
+              let yPos = proxy.position(forY: currentPriceValue),
+              xPos.isFinite && !xPos.isNaN,
+              yPos.isFinite && !yPos.isNaN else {
             return AnyView(EmptyView())
         }
         
-        // Get Y position for current price
-        guard let yPosition = proxy.position(forY: currentPriceValue) else {
-            return AnyView(EmptyView())
-        }
-        
-        let isPositive = priceChange.percent >= 0
-        
-        // Convert to geometry coordinates
-        let xPos = plotFrame.minX + xPosition
-        let yPos = plotFrame.minY + yPosition
-        let lineWidth = plotFrame.width - (xPos - plotFrame.minX)
+        let x = plotFrame.minX + xPos
+        let y = plotFrame.minY + yPos
+        let lineWidth = max(0, plotFrame.width - (x - plotFrame.minX))
         
         return AnyView(
             ZStack {
-                // Horizontal line extending from current price to right edge
+                // Horizontal price line - TradingView style
                 Rectangle()
-                    .fill(isPositive ? Color.green.opacity(0.25) : Color.red.opacity(0.25))
-                    .frame(width: lineWidth, height: 1)
-                    .position(x: (xPos + plotFrame.maxX) / 2, y: yPos)
+                    .fill(Color(red: 0.77, green: 0.80, blue: 0.81, opacity: 0.5))
+                    .frame(width: lineWidth, height: 0.5)
+                    .position(x: (x + plotFrame.maxX) / 2, y: y)
                 
-                // Price indicator box at the right edge
-                HStack(spacing: 4) {
-                    // Small dot on the line
-                    Circle()
-                        .fill(strokeColor)
-                        .frame(width: 6, height: 6)
-                    
-                    // Price label
-                    Text(formatPrice(currentPriceValue))
-                        .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(Color.primary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(.systemBackground))
-                        .shadow(color: Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(isPositive ? Color.green.opacity(0.4) : Color.red.opacity(0.4), lineWidth: 1)
-                )
-                .position(x: plotFrame.maxX - 35, y: yPos)
+                // Price label - TradingView style
+                Text(formatPrice(currentPriceValue))
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(Color(red: 0.13, green: 0.13, blue: 0.13))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.white)
+                    .position(x: plotFrame.maxX - 45, y: y)
             }
-            .animation(.easeOut(duration: 0.3), value: currentPriceValue)
+            .animation(.linear(duration: 0.2), value: currentPriceValue)
         )
     }
     
@@ -328,8 +329,8 @@ struct TradingViewChart: View {
             ForEach(Array(timeLabels.enumerated()), id: \.offset) { index, label in
                 Spacer()
                 Text(label)
-                    .font(.system(size: 11, weight: .medium, design: .default))
-                    .foregroundStyle(Color.gray)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Color(red: 0.13, green: 0.13, blue: 0.13))
                 if index < timeLabels.count - 1 {
                     Spacer()
                 }
@@ -338,6 +339,7 @@ struct TradingViewChart: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(height: 32)
+        .background(Color.white)
     }
     
     private func getTimeLabels() -> [String] {
@@ -366,32 +368,23 @@ struct TradingViewChart: View {
             
             return labels
         } else {
-            return formatTimeLabelForNonBTC()
-        }
-    }
-    
-    private func formatTimeLabelForNonBTC() -> [String] {
-        let now = Date()
-        let calendar = Calendar.current
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        
-        return (0..<4).map { i in
-            let minutesToSubtract = Int(Double(3 - i) * 10)
-            if let time = calendar.date(byAdding: .minute, value: -minutesToSubtract, to: now) {
-                return formatter.string(from: time)
+            let now = Date()
+            let calendar = Calendar.current
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            
+            return (0..<4).map { i in
+                let minutesToSubtract = Int(Double(3 - i) * 10)
+                if let time = calendar.date(byAdding: .minute, value: -minutesToSubtract, to: now) {
+                    return formatter.string(from: time)
+                }
+                return "--:--"
             }
-            return "--:--"
         }
     }
     
     // MARK: - Helper Functions
-    private var strokeColor: Color {
-        Color(hex: stock.color) ?? .blue
-    }
-    
     private func formatPrice(_ value: Double) -> String {
-        // For Bitcoin prices (typically 40k-100k), show with commas, no decimals
         if stock.symbol == "BTC" {
             let formatter = NumberFormatter()
             formatter.numberStyle = .decimal
@@ -411,7 +404,6 @@ struct TradingViewChart: View {
     }
     
     private func formatPriceForAxis(_ value: Double) -> String {
-        // Compact format for Y-axis
         return formatPrice(value)
     }
     

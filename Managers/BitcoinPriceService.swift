@@ -32,16 +32,20 @@ class BitcoinPriceService: ObservableObject {
     }
     
     func start() {
-        guard webSocketTask == nil else { return }
+        // Clear any existing task first to avoid duplicates
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
         
         // Fetch initial price first for immediate display
         fetchInitialPrice()
         
+        print("🔌 Starting WebSocket connection to Binance...")
         let session = URLSession(configuration: .default)
         webSocketTask = session.webSocketTask(with: binanceWSURL)
         webSocketTask?.resume()
         
         isConnected = true
+        print("✅ WebSocket connected. Waiting for price updates...")
         receiveMessage()
     }
     
@@ -74,12 +78,13 @@ class BitcoinPriceService: ObservableObject {
                 }
                 
             case .failure(let error):
-                print("WebSocket error: \(error.localizedDescription)")
+                print("❌ WebSocket error: \(error.localizedDescription)")
+                self.isConnected = false
                 // Attempt to reconnect after a delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                    if self.isConnected {
-                        self.start()
-                    }
+                    print("🔄 Attempting to reconnect WebSocket...")
+                    self.webSocketTask = nil // Clear the task
+                    self.start()
                 }
             }
         }
@@ -89,28 +94,46 @@ class BitcoinPriceService: ObservableObject {
         guard let data = text.data(using: .utf8) else { return }
         
         do {
-            let response = try JSONDecoder().decode(BinanceTickerResponse.self, from: data)
-            
-            if let price = Double(response.c) {
+            // Parse JSON manually
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let priceString = json["c"] as? String,
+               let price = Double(priceString),
+               price > 1000 && price < 200000 { // Validate reasonable range
+                
                 DispatchQueue.main.async {
+                    // Always update current price (WebSocket provides live updates)
+                    // Remove threshold check - update on every message for real-time updates
+                    let oldPrice = self.currentPrice
                     self.currentPrice = price
                     
-                    // Add to history
+                    // Debug: Print price update (first time or on significant change)
+                    if oldPrice == 0 || abs(price - oldPrice) > 1 {
+                        print("💰 BTC price update: $\(String(format: "%.2f", price)) (was: $\(String(format: "%.2f", oldPrice)))")
+                    }
+                    
+                    // Add to history with timestamp
+                    let eventTime = (json["E"] as? Int64) ?? Int64(Date().timeIntervalSince1970 * 1000)
                     let dataPoint = PriceDataPoint(
                         price: price,
-                        timestamp: Date(timeIntervalSince1970: Double(response.E) / 1000.0)
+                        timestamp: Date(timeIntervalSince1970: Double(eventTime) / 1000.0)
                     )
                     
-                    self.priceHistory.append(dataPoint)
+                    // Add to history - only add if price actually changed to avoid duplicates
+                    let shouldAddToHistory = self.priceHistory.isEmpty || 
+                                            abs(self.priceHistory.last?.price ?? 0 - price) > 0.01
                     
-                    // Keep only last N points for performance
-                    if self.priceHistory.count > self.maxHistoryPoints {
-                        self.priceHistory.removeFirst()
+                    if shouldAddToHistory {
+                        self.priceHistory.append(dataPoint)
+                        
+                        // Keep only last N points for performance
+                        if self.priceHistory.count > self.maxHistoryPoints {
+                            self.priceHistory.removeFirst()
+                        }
                     }
                 }
             }
         } catch {
-            print("Error decoding Binance response: \(error)")
+            print("Error parsing Binance WebSocket: \(error)")
         }
     }
     
